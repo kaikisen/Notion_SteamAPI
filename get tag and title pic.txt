@@ -1,0 +1,110 @@
+若使用deepnote，新建项目请首先在一个栏位中运行：
+
+!pip install bs4==0.0.2
+
+
+接着复制粘贴并运行以下内容：
+
+import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+import time
+from datetime import datetime
+
+
+def get_steam_game_info(appid):
+    session = requests.Session()
+    url = f"https://store.steampowered.com/app/{appid}/?l=schinese"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+    }
+
+    # 关键：强制添加Cookies绕过年龄验证
+    session.cookies.set('birthtime', '568022401')   # 1990年某个时间戳
+    session.cookies.set('lastagecheckage', '1-January-1990')
+    session.cookies.set('wants_mature_content', '1')
+
+    try:
+        response = session.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+    except Exception as e:
+        print(f"请求失败: AppID {appid}, 错误: {e}")
+        return None, None, None
+
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    # 封面图片
+    try:
+        img_tag = soup.find('img', {'class': 'game_header_image_full'})
+        cover_url = img_tag['src'] if img_tag else None
+    except Exception as e:
+        cover_url = None
+        print(f"封面图片提取失败: AppID {appid}, 错误: {e}")
+
+    # 简体中文游戏名
+    try:
+        title_tag = soup.find('div', {'class': 'apphub_AppName'})
+        game_name = title_tag.get_text(strip=True) if title_tag else None
+    except Exception as e:
+        game_name = None
+        print(f"游戏名提取失败: AppID {appid}, 错误: {e}")
+
+    # 标签
+    try:
+        tags = []
+        tag_container = soup.find_all('a', {'class': 'app_tag'})
+        #只取前8个tag
+        for tag in tag_container[:8]:
+            tag_text = tag.get_text(strip=True)
+            if tag_text:
+                tags.append(tag_text)
+        tags_str = ', '.join(tags)
+    except Exception as e:
+        tags_str = None
+        print(f"标签提取失败: AppID {appid}, 错误: {e}")
+
+    return game_name, tags_str, cover_url
+
+# 剩下的和之前的批量处理一样
+def process_csv(input_csv, output_csv):
+    # 读取原CSV
+    df = pd.read_csv(input_csv)
+
+    # 创建新的列
+    new_game_names = []
+    new_playdateforNotion = []
+    new_tags = []
+    new_cover_urls = []
+
+    for idx, row in df.iterrows():
+        appid = row['appid']
+        en_name = row['游戏名称']
+        lastplayedon = row['最后游玩时间']
+        dt = datetime.strptime(lastplayedon, "%Y/%m/%d %H:%M")
+        print(f"正在处理第 {idx+1}/{len(df)}个AppID: {appid},{en_name}")
+        
+        game_name, tags_str, cover_url = get_steam_game_info(appid)
+        playdateforNotion = dt.strftime("%m/%d/%Y")
+        
+        new_game_names.append(game_name)
+        new_playdateforNotion.append(playdateforNotion)
+        new_tags.append(tags_str)
+        new_cover_urls.append(cover_url)
+        
+        time.sleep(1.0)  # 加一点延迟，防止被封IP
+
+    # 把新列加到 DataFrame
+    df['中文游戏名'] = new_game_names
+    df['最后游玩时间_notion'] = new_playdateforNotion
+    df['标签'] = new_tags
+    df['封面图URL'] = new_cover_urls
+
+    # 保存到新的CSV
+    df.to_csv(output_csv, index=False, encoding='utf-8-sig')
+    print(f"处理完成，文件已保存到 {output_csv}")
+
+# 示例使用
+if __name__ == "__main__":
+    input_file = "steam_games_info.csv"    # 改成你的文件名
+    output_file = "加了封面和标签的新表格.csv"  # 输出的新文件名
+    process_csv(input_file, output_file)
