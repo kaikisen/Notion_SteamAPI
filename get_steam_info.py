@@ -1,0 +1,237 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sun Apr 27 21:25:45 2025
+
+@author: kaikisen
+"""
+
+import urllib.request
+import urllib.error
+import json
+import pandas as pd
+import time
+from bs4 import BeautifulSoup
+from urllib import request, parse
+from http import cookiejar
+
+
+'''
+重要！在下面两行替换为你的 Steam API 密钥和 Steam ID
+'''
+STEAM_API_KEY = "此处替换Steam API 密钥，保留双引号"
+STEAM_ID = "此处替换17位Steam ID，保留双引号"
+
+##########################################################################
+
+def get_json(url):
+    try:
+        req = urllib.request.Request(url) #urllib代替request包 不然会报错
+        req.add_header('User-Agent', 'Mozilla/5.0')
+        with urllib.request.urlopen(req) as response:
+            return json.loads(response.read().decode('utf-8'))
+    except Exception as e:
+        print(f"请求失败: {e}")
+        return None
+
+def get_json_with_retry(url, retries=3, delay=1):
+    for i in range(retries):
+        try:
+            return get_json(url)
+        except urllib.error.HTTPError as e:
+            if e.code == 400:
+                raise e  # 明确的 400 错误，直接抛出
+            print(f"HTTP 错误，尝试重试 ({i+1}/{retries})：{e}")
+        except Exception as e:
+            print(f"请求失败，尝试重试 ({i+1}/{retries})：{e}")
+        time.sleep(delay)
+    return None
+    try:
+        req = urllib.request.Request(url) #urllib代替request包 不然会报错
+        req.add_header('User-Agent', 'Mozilla/5.0')
+        with urllib.request.urlopen(req) as response:
+            return json.loads(response.read().decode('utf-8'))
+    except Exception as e:
+        print(f"请求失败: {e}")
+        return None
+
+#输入appid和name，输出四项成就信息字典
+def get_game_achievements(appid, game_name):
+    url = f"https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/?key={STEAM_API_KEY}&steamid={STEAM_ID}&appid={appid}"
+    try:
+        data = get_json_with_retry(url)
+        
+        if not data or 'playerstats' not in data or 'achievements' not in data['playerstats']:
+            print(f"游戏 '{game_name}' 没有成就数据或无法获取完整信息")
+            return None
+        
+        achievements = data['playerstats']['achievements']
+        total = len(achievements)
+        unlocked = sum(1 for a in achievements if a.get('achieved', 0) == 1)
+        unlocked_times = [
+            achievement['unlocktime']
+            for achievement in data['playerstats']['achievements']
+            if achievement['achieved'] == 1 and achievement.get("unlocktime", 0) > 0
+            ]
+        if unlocked_times:
+            earliest_unlock = min(unlocked_times)
+        else:
+            print('尚未解锁成就')
+            earliest_unlock = None
+        
+        return {
+            '已解锁成就数': unlocked,
+            '总成就数': total,
+            '成就完成率(%)': round((unlocked / total * 100), 2) if total > 0 else 0,
+            '首个成就解锁于': pd.to_datetime(earliest_unlock, unit='s').strftime('%m/%d/%Y') if earliest_unlock else None
+        }
+    except urllib.error.HTTPError as e:
+        if e.code == 400:
+            print(f"游戏 '{game_name}' 不允许访问成就数据，将只记录基础信息")
+            return None
+        else:
+            print(f"获取游戏 '{game_name}' 成就数据时发生错误: {e}")
+            return None
+    except Exception as e:
+        print(f"获取游戏 '{game_name}' 成就数据时发生意外错误: {e}")
+        return None
+
+
+#输入appid，输出三项游戏商店信息
+def get_steam_game_info(appid):
+    # 构造请求 URL 和 Headers
+    url = f"https://store.steampowered.com/app/{appid}/?l=schinese"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+    }
+
+    # 设置 Cookies（用于绕过年龄验证）
+    cj = cookiejar.CookieJar()
+    opener = request.build_opener(request.HTTPCookieProcessor(cj))
+    request.install_opener(opener)
+
+    # 手动添加 Cookie
+    cookies = {
+        'birthtime': '568022401',
+        'lastagecheckage': '1-January-1990',
+        'wants_mature_content': '1'
+    }
+
+    cookie_str = "; ".join([f"{key}={value}" for key, value in cookies.items()])
+    headers['Cookie'] = cookie_str
+
+    # 创建请求
+    req = request.Request(url, headers=headers)
+
+    try:
+        with request.urlopen(req, timeout=10) as response:
+            html = response.read().decode('utf-8')
+    except Exception as e:
+        print(f"请求失败: AppID {appid}, 错误: {e}")
+        return None
+
+    soup = BeautifulSoup(html, 'html.parser')
+
+    # 游戏名
+    try:
+        title_tag = soup.find('div', {'class': 'apphub_AppName'})
+        game_name = title_tag.get_text(strip=True) if title_tag else None
+    except Exception as e:
+        game_name = None
+        print(f"游戏名提取失败: AppID {appid}, 错误: {e}")
+
+    # 标签
+    try:
+        tags = []
+        tag_container = soup.find_all('a', {'class': 'app_tag'})
+        for tag in tag_container[:8]:
+            tag_text = tag.get_text(strip=True)
+            if tag_text:
+                tags.append(tag_text)
+        tags_str = ', '.join(tags)
+    except Exception as e:
+        tags_str = None
+        print(f"标签提取失败: AppID {appid}, 错误: {e}")
+
+    metainfo = {
+        '封面': f'https://steamcdn-a.akamaihd.net/steam/apps/{appid}/header.jpg',
+        '游戏名称': game_name,
+        'tag': tags_str
+    }
+
+    return metainfo
+
+
+
+def get_steam_games():
+    """获取 Steam 游戏数据（包含成就信息）"""
+    print("正在从 Steam 获取数据...")
+    url = f"https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key={STEAM_API_KEY}&steamid={STEAM_ID}&format=json&include_appinfo=true"
+    data = get_json_with_retry(url)
+    
+    if not data or not data.get('response', {}).get('games'):
+        print("未找到游戏数据，请检查 API 密钥和 SteamID")
+        return []
+    
+
+    games = []
+    for idx, game in enumerate(data['response']['games'], 1):
+        appid = game.get('appid')
+        name = game.get('name', '未知游戏')
+        if game.get('rtime_last_played') == 0:
+            print(f"正在处理游戏 {idx}/{len(data['response']['games'])}: {name}，时长为0,跳过")
+            continue
+        print(f"正在处理游戏 {idx}/{len(data['response']['games'])}: {name}")
+
+        game_info = {
+            'En_name': name,
+            'appid':appid,
+            '游戏时长/h': round(game.get('playtime_forever', 0) / 60, 2),
+            #'总游玩时间(分钟)': game.get('playtime_forever', 0),
+            '最后游玩时间': pd.to_datetime(game.get('rtime_last_played', 0), unit='s').strftime('%m/%d/%Y')
+        }
+
+        achievements = get_game_achievements(appid, name)
+        if achievements:
+            game_info.update(achievements)
+        else:
+            game_info.update({
+                #'已解锁成就数': 'N/A',
+                #'总成就数': 'N/A',
+                '成就完成率(%)': None,
+                '首个成就解锁于': None
+            })
+        
+        metainfo = get_steam_game_info(appid)
+        if metainfo:
+            game_info.update(metainfo)
+        else:
+            game_info.update({
+                '封面':'N/A',
+                '游戏名称': 'N/A',
+                'tag': 'N/A'
+            })
+        games.append(game_info)
+        time.sleep(1)
+        if idx % 20 == 0:
+            time.sleep(5)
+    return games
+
+
+
+
+
+
+def export_to_csv(games, filename="steam_games_info.csv"):
+    if not games:
+        print("没有可导出的数据")
+        return
+    
+    df = pd.DataFrame(games)
+    df = df.sort_values(by='游戏时长/h', ascending=False)
+    df.to_csv(filename, index=False, encoding='utf_8_sig')
+    print(f"数据已导出到 {filename}")
+
+if __name__ == "__main__":
+    games = get_steam_games()
+    export_to_csv(games)
+    print("操作完成！")
