@@ -256,10 +256,10 @@ def main():
         #print('steam '+last_played)
         if game.get('rtime_last_played') == 0:
             continue
-        
-        if appid in notion_games:
+        if appid in ban_appid:
             continue
-        elif appid not in notion_games:
+            
+        if appid not in notion_games:
             print(f"新增游戏: {game['name']}")
             achievement = get_game_achievements(appid, game['name']) or {}
             meta = get_steam_game_info(appid) or {}
