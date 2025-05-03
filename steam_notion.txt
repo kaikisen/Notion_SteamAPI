@@ -22,6 +22,9 @@ STEAM_API_KEY = "此处替换Steam API 密钥，保留双引号"
 STEAM_ID = "此处替换17位Steam ID，保留双引号"
 notion_api = "此处替换notion_api 密钥，保留双引号"
 database_id = "此处替换32位database_id，保留双引号"
+#添加不需要的游戏appid
+ban_appid =[]
+##########################################################################
 
 import requests
 
@@ -253,6 +256,7 @@ def main():
         #print('steam '+last_played)
         if game.get('rtime_last_played') == 0:
             continue
+        
         if appid in ban_appid:
             continue
         if appid not in notion_games:
@@ -290,6 +294,3 @@ def main():
 
     export_games_to_csv(new_games, updated_games)
     print("操作完成！")
-
-if __name__ == "__main__":
-    main()
